@@ -1,0 +1,88 @@
+#!/bin/sh
+# Simple PTZ stepper control (half-step)
+# Usage: ptz left|right|up|down|stop [steps] [delay_us]
+# Usage: echo "left|right|up|down|stop [steps] [delay_us]" | ptz
+
+PAN_GPIOS="38 39 45 48"
+TILT_GPIOS="41 42 43 47"
+LOCK="/tmp/ptz.lock"
+
+gpio_write() { echo "$2" > "/sys/class/gpio/gpio$1/value" 2>/dev/null; }
+
+set_4lines() {
+  gp="$1"; b1="$2"; b2="$3"; b3="$4"; b4="$5"
+  set -- $gp
+  gpio_write "$1" "$b1"
+  gpio_write "$2" "$b2"
+  gpio_write "$3" "$b3"
+  gpio_write "$4" "$b4"
+}
+
+apply_state() {
+  gp="$1"; st="$2"
+  case "$st" in
+    0) set_4lines "$gp" 1 0 0 0 ;;
+    1) set_4lines "$gp" 1 1 0 0 ;;
+    2) set_4lines "$gp" 0 1 0 0 ;;
+    3) set_4lines "$gp" 0 1 1 0 ;;
+    4) set_4lines "$gp" 0 0 1 0 ;;
+    5) set_4lines "$gp" 0 0 1 1 ;;
+    6) set_4lines "$gp" 0 0 0 1 ;;
+    7) set_4lines "$gp" 1 0 0 1 ;;
+    *) set_4lines "$gp" 0 0 0 0 ;;
+  esac
+}
+
+move_motor() {
+  gp="$1"; dir="$2"; steps="$3"; delay="$4"
+
+  state=0
+  i=0
+  while [ "$i" -lt "$steps" ]; do
+    state=$(( (state + dir + 8) % 8 ))
+    apply_state "$gp" "$state"
+    usleep "$delay"
+    i=$((i+1))
+  done
+}
+
+# Arguments / read mode
+if [ -n "$1" ]; then
+  dir="$1"
+  steps="$2"
+  delay="$3"
+else
+  read dir steps delay
+fi
+
+[ -z "$dir" ] && { echo "Empty direction"; exit 0; }
+[ -z "$steps" ] && steps="100"
+[ -z "$delay" ] && delay="4"
+
+case "$dir" in left|right|up|down|stop) ;; *) echo "Wrong direction"; exit 0 ;; esac
+case "$steps" in ''|*[!0-9]*) echo "Wrong steps"; exit 0 ;; esac
+case "$delay" in ''|*[!0-9]*) echo "Wrong delay"; exit 0 ;; esac
+
+[ "$steps" -gt 5000 ] && steps=5000
+[ "$delay" -lt 300 ] && delay=300
+[ "$delay" -gt 50000 ] && delay=50000
+
+if mkdir "$LOCK" 2>/dev/null; then
+
+  case "$dir" in
+    right) move_motor "$PAN_GPIOS"  1 "$steps" "$delay" ;;
+    left)  move_motor "$PAN_GPIOS" -1 "$steps" "$delay" ;;
+    up)    move_motor "$TILT_GPIOS" -1 "$steps" "$delay" ;;
+    down)  move_motor "$TILT_GPIOS"  1 "$steps" "$delay" ;;
+    stop)
+      for g in $PAN_GPIOS $TILT_GPIOS; do
+        gpio_write "$g" 0
+      done
+      ;;
+  esac
+
+  rmdir "$LOCK" 2>/dev/null
+  echo "OK $dir $steps $delay"
+else
+  echo "BUSY"
+fi

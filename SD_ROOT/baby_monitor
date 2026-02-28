@@ -1,0 +1,27 @@
+#!/bin/sh
+
+# Enable telnet
+telnetd -l /bin/sh &
+
+# Add to PATH
+export PATH=/mnt/extsd/bin:$PATH
+
+# Enable SSH & SFTP
+mount --bind /mnt/extsd/etc/profile /etc/profile
+mount --bind /mnt/extsd/opt /opt
+dropbear -B -R
+
+# Disable startup sound
+mount --bind /mnt/extsd/usr/ringtone/power_on.mp3 /usr/ringtone/power_on.mp3
+
+# Enable local PTZ
+nc -ll -p 2323 -e /mnt/extsd/bin/ptz &
+
+# Run main app
+/usr/wifi/sh/wifi_usb_ctrl.sh start
+/usr/wifi/sh/wifi_sdio_ctrl.sh start
+STREAM_HACK_LOG=1 LD_PRELOAD=/mnt/extsd/lib/libimp.so /tmp/jsapp/baby_monitor &
+
+# Set HW Clock
+sleep 60
+hwclock -s
